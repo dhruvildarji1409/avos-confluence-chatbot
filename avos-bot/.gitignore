@@ -1,0 +1,2 @@
+node_modules\n.next\n.env\n.env.local\n.env.development.local\n.env.test.local\n.env.production.local\nnpm-debug.log*\nyarn-debug.log*\nyarn-error.log*
+node_modules
