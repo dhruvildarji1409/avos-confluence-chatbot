@@ -8,6 +8,8 @@ interface MessageType {
   role: 'user' | 'assistant';
   content: string;
   timestamp: Date;
+  isDeepSearch?: boolean;
+  isError?: boolean;
 }
 
 interface Source {
@@ -15,28 +17,158 @@ interface Source {
   url: string;
 }
 
-const ChatInterface: React.FC = () => {
-  const [messages, setMessages] = useState<MessageType[]>([]);
+interface ChatInterfaceProps {
+  initialMessages?: MessageType[];
+  sessionId?: string | null;
+}
+
+const ChatInterface: React.FC<ChatInterfaceProps> = ({ 
+  initialMessages = [], 
+  sessionId: initialSessionId = null 
+}) => {
+  const [messages, setMessages] = useState<MessageType[]>(initialMessages);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(initialSessionId);
   const [sources, setSources] = useState<Source[]>([]);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Helper function to safely parse JSON
+  const safeJsonParse = async (response: Response): Promise<any> => {
+    console.log('Response status:', response.status);
+    console.log('Response headers:', JSON.stringify(Array.from(response.headers.entries())));
+    
+    try {
+      const contentType = response.headers.get('content-type');
+      console.log('Content-Type header:', contentType);
+      
+      // Check if the content type is definitely JSON
+      if (contentType && contentType.includes('application/json')) {
+        try {
+          // Clone the response to safely use it again
+          const jsonData = await response.clone().json();
+          console.log('Successfully parsed JSON directly');
+          return jsonData;
+        } catch (directJsonError) {
+          console.error('Failed to parse direct JSON:', directJsonError);
+          // Fall through to text parsing as a backup
+        }
+      }
+      
+      // Get text content for more robust handling
+      const text = await response.text();
+      console.log('Response text length:', text.length);
+      
+      // If the response is empty, return an error object
+      if (!text || text.trim() === '') {
+        console.error('Empty response received');
+        return {
+          answer: "I received an empty response from the server. Please try again.",
+          sources: [],
+          isError: true
+        };
+      }
+      
+      // Try to parse text as JSON
+      try {
+        const parsedData = JSON.parse(text);
+        console.log('Successfully parsed text as JSON');
+        return parsedData;
+      } catch (jsonParseError) {
+        console.error('Failed to parse response text as JSON:', jsonParseError);
+        
+        // If it contains HTML, it's probably an error page
+        if (text.includes('<!DOCTYPE') || text.includes('<html')) {
+          console.error('Response appears to be HTML instead of JSON');
+          
+          // Extract useful information from the HTML error page
+          let errorTitle = 'Unknown server error';
+          let errorDetails = '';
+          
+          try {
+            // Try to extract error title from HTML
+            const titleMatch = text.match(/<title>(.*?)<\/title>/i);
+            if (titleMatch && titleMatch[1]) {
+              errorTitle = titleMatch[1].trim();
+            }
+            
+            // Try to extract error message from common patterns
+            const errorMsgMatch = text.match(/<div class="error-message">(.*?)<\/div>/i) || 
+                                text.match(/<p class="error">(.*?)<\/p>/i) ||
+                                text.match(/<h1>(.*?)<\/h1>/i);
+            
+            if (errorMsgMatch && errorMsgMatch[1]) {
+              errorDetails = errorMsgMatch[1].trim();
+            }
+            
+            console.error('Extracted HTML error info - Title:', errorTitle, 'Details:', errorDetails);
+          } catch (extractError) {
+            console.error('Failed to extract HTML error details:', extractError);
+          }
+          
+          // Log the first 500 chars of HTML for debugging
+          console.error('HTML response preview:', text.substring(0, 500) + '...');
+          
+          return {
+            answer: `The server returned an HTML page instead of data (${errorTitle}). This typically happens when there's a server error. Check server logs for details.${errorDetails ? ' Error details: ' + errorDetails : ''}`,
+            error: "HTML response received",
+            htmlError: errorTitle,
+            htmlDetails: errorDetails,
+            sources: [],
+            isError: true
+          };
+        }
+        
+        // Try to extract JSON data if embedded in other content
+        const jsonMatch = text.match(/({[\s\S]*})/) || text.match(/([\s\S]*])/);
+        if (jsonMatch) {
+          try {
+            console.log('Found JSON pattern, attempting to parse extracted content');
+            const extractedJson = JSON.parse(jsonMatch[0]);
+            console.log('Successfully parsed extracted JSON');
+            return extractedJson;
+          } catch (extractError) {
+            console.error('Failed to extract JSON from response:', extractError);
+          }
+        }
+        
+        // Return a formatted response with the text content for debugging
+        return {
+          answer: "I'm having trouble processing the server's response format. The server might be experiencing issues.",
+          error: text.substring(0, 200),
+          debugText: text.length > 500 ? text.substring(0, 500) + '...' : text,
+          sources: [],
+          isError: true
+        };
+      }
+    } catch (error) {
+      console.error('Critical error in safeJsonParse:', error);
+      
+      // Return a safe fallback that won't break the UI
+      return {
+        answer: "Sorry, I encountered a technical issue. Please try again later.",
+        error: error instanceof Error ? error.message : 'Unknown parsing error',
+        sources: [],
+        isError: true
+      };
+    }
+  };
 
   // Scroll to bottom when messages change
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
   
-  // Load session ID from localStorage on mount
+  // Load session ID from localStorage on mount if not provided
   useEffect(() => {
-    const storedSessionId = localStorage.getItem('chatSessionId');
-    if (storedSessionId) {
-      setSessionId(storedSessionId);
-      // TODO: Load chat history for this session
+    if (!sessionId) {
+      const storedSessionId = localStorage.getItem('chatSessionId');
+      if (storedSessionId) {
+        setSessionId(storedSessionId);
+      }
     }
-  }, []);
+  }, [sessionId]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -54,6 +186,8 @@ const ChatInterface: React.FC = () => {
     setIsLoading(true);
     
     try {
+      console.log(`Sending chat request for: "${input.substring(0, 50)}${input.length > 50 ? '...' : ''}"`);
+      
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: {
@@ -65,10 +199,54 @@ const ChatInterface: React.FC = () => {
         }),
       });
       
-      const data = await response.json();
-      
+      // Check if the response is ok
       if (!response.ok) {
-        throw new Error(data.error || 'Failed to get response');
+        const contentType = response.headers.get('content-type');
+        let errorMessage = '';
+        
+        try {
+          if (contentType && contentType.includes('application/json')) {
+            // Try to get error from JSON
+            const errorData = await safeJsonParse(response.clone());
+            errorMessage = errorData.error || `Server error: ${response.status}`;
+          } else {
+            // Get error from text
+            const text = await response.text();
+            // Log the first part of the response to help debug
+            console.error('Non-JSON response:', text.substring(0, 100));
+            errorMessage = `Server returned non-JSON response (${response.status})`;
+          }
+        } catch (parseError) {
+          errorMessage = `Server error (${response.status}): Unable to parse error details`;
+        }
+        
+        throw new Error(errorMessage);
+      }
+      
+      // Use the safe parsing helper to avoid JSON.parse errors
+      let data;
+      try {
+        data = await safeJsonParse(response);
+        console.log("Successfully parsed response:", data ? "Valid data" : "Empty data");
+        
+        // Extra validation to ensure we have a valid data object
+        if (!data) {
+          throw new Error("Empty response data");
+        }
+      } catch (parseError) {
+        console.error("Failed to parse response:", parseError);
+        // Fallback to a simple error message that won't break the UI
+        throw new Error("Failed to parse server response: " + 
+          (parseError instanceof Error ? parseError.message : "Unknown parsing error"));
+      } finally {
+        // Always ensure loading state is reset
+        setIsLoading(false);
+      }
+      
+      // Safety check for required fields
+      if (typeof data !== 'object' || !data.answer) {
+        console.error("Invalid response structure:", data);
+        throw new Error("The server returned an incomplete response");
       }
       
       // Save session ID if it's the first message
@@ -80,91 +258,61 @@ const ChatInterface: React.FC = () => {
       const botMessage: MessageType = {
         role: 'assistant',
         content: data.answer,
-        timestamp: new Date()
+        timestamp: new Date(),
+        isDeepSearch: data.isDeepSearch || false,
+        isError: data.isError || false
       };
       
       setMessages(prev => [...prev, botMessage]);
       setSources(data.sources || []);
+      
     } catch (error) {
+      console.error('Chat error:', error);
+      
+      // Create a user-friendly error message
+      const errorContent = error instanceof Error 
+        ? `Sorry, an error occurred: ${error.message}`
+        : "Sorry, an unexpected error occurred. Please try again later.";
+      
       const errorMessage: MessageType = {
         role: 'assistant',
-        content: `Error: ${(error as Error).message || 'Something went wrong. Please try again later.'}`,
-        timestamp: new Date()
+        content: errorContent,
+        timestamp: new Date(),
+        isError: true
       };
       
       setMessages(prev => [...prev, errorMessage]);
     } finally {
+      // Make absolutely sure loading state is reset
       setIsLoading(false);
     }
   };
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="flex-1 overflow-auto bg-white rounded-lg shadow-md p-4 mb-4">
-        {messages.length === 0 ? (
-          <div className="h-full flex flex-col items-center justify-center text-gray-500">
-            <div className="text-center p-6 max-w-md">
-              <h2 className="text-xl font-bold mb-2">Welcome to AVOS Chatbot!</h2>
-              <p className="mb-4">
-                Ask me anything about AVOS based on the Confluence documentation.
-              </p>
-              <p className="text-sm">
-                You can import new Confluence pages using the panel on the left.
-              </p>
-            </div>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            {messages.map((message, index) => (
-              <Message key={index} message={message} />
-            ))}
-            {isLoading && (
-              <div className="flex items-center text-gray-500 animate-pulse">
-                <FaSpinner className="animate-spin mr-2" />
-                <span>AVOS is thinking...</span>
-              </div>
-            )}
-            <div ref={messagesEndRef} />
-          </div>
-        )}
+    <div className="chat-interface">
+      {/* Chat messages */}
+      <div className="messages">
+        {messages.map((message, index) => (
+          <Message key={index} message={message} />
+        ))}
+        <div ref={messagesEndRef} />
       </div>
-      
-      {sources.length > 0 && (
-        <div className="bg-gray-50 rounded-lg p-3 mb-4">
-          <h3 className="text-sm font-medium mb-2">Sources:</h3>
-          <ul className="text-sm text-blue-600">
-            {sources.map((source, index) => (
-              <li key={index} className="mb-1 truncate">
-                <a href={source.url} target="_blank" rel="noopener noreferrer" className="hover:underline">
-                  {source.title}
-                </a>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-      
-      <form onSubmit={handleSubmit} className="flex items-center mt-auto">
-        <div className="relative flex-1">
-          <input
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="Ask a question about AVOS..."
-            className="w-full p-3 pr-10 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            disabled={isLoading}
-          />
-        </div>
-        <button
-          type="submit"
-          disabled={isLoading || !input.trim()}
-          className="ml-2 inline-flex items-center px-4 py-3 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
-        >
-          {isLoading ? <FaSpinner className="animate-spin" /> : <FaPaperPlane />}
+
+      {/* Input form */}
+      <form onSubmit={handleSubmit} className="input-form">
+        <input
+          type="text"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          placeholder="Type your message..."
+          disabled={isLoading}
+        />
+        <button type="submit" disabled={isLoading || !input.trim()}>
+          {isLoading ? <FaSpinner className="spinner" /> : <FaPaperPlane />}
         </button>
       </form>
     </div>
   );
 };
 
-export default ChatInterface; 
+export default ChatInterface;

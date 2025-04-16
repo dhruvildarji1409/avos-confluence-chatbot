@@ -1,12 +1,14 @@
 import type { Metadata } from 'next'
 import { Inter } from 'next/font/google'
 import './globals.css'
+import { AuthProvider } from '@/context/AuthContext'
 
 const inter = Inter({ subsets: ['latin'] })
 
+// Metadata needs to be exported from a server component
 export const metadata: Metadata = {
-  title: 'AVOS Confluence Chatbot',
-  description: 'A chatbot that answers questions based on NVIDIA Confluence content',
+  title: 'AVOS Chatbot',
+  description: 'Intelligent assistant for NVIDIA employees',
 }
 
 export default function RootLayout({
@@ -17,9 +19,11 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={inter.className}>
-        <main className="flex min-h-screen flex-col">
-          {children}
-        </main>
+        <AuthProvider>
+          <main className="flex min-h-screen flex-col">
+            {children}
+          </main>
+        </AuthProvider>
       </body>
     </html>
   )

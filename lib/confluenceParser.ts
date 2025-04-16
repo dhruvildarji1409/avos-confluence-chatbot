@@ -16,159 +16,292 @@ export interface ParsedConfluenceData {
   pageTitle: string;
   pageUrl: string;
   content: string;
+  fullHtmlContent: string;
   extractedElements: ExtractedElement[];
+  nestedLinks?: string[];
 }
 
-export async function parseConfluencePage(pageUrl: string): Promise<ParsedConfluenceData> {
+export async function parseConfluencePage(
+  pageUrl: string, 
+  depth: number = 0, 
+  maxDepth: number = 3,
+  visitedUrls: Set<string> = new Set()
+): Promise<ParsedConfluenceData> {
   // Connect to database
   await connectToDatabase();
+  
+  // Prevent infinite recursion by checking if we've already visited this URL
+  if (visitedUrls.has(pageUrl)) {
+    console.log(`Already visited ${pageUrl}, skipping to prevent infinite recursion`);
+    return {
+      pageId: Buffer.from(pageUrl).toString('base64'),
+      pageTitle: "Previously Visited Page",
+      pageUrl: pageUrl,
+      content: "This page was already processed in the current parsing chain.",
+      fullHtmlContent: "",
+      extractedElements: []
+    };
+  }
+
+  // Add current URL to visited set
+  visitedUrls.add(pageUrl);
   
   // Check if page is already parsed and stored
   const existingPage = await ConfluenceContent.findOne({ pageUrl });
   if (existingPage) {
+    // Even for existing pages, we want to extract nested links for recursion
+    const nestedLinks = existingPage.nestedLinks || [];
+
+    // If we're at max depth, return without recursively parsing nested links
+    if (depth >= maxDepth) {
+      return {
+        pageId: existingPage.pageId,
+        pageTitle: existingPage.pageTitle,
+        pageUrl: existingPage.pageUrl,
+        content: existingPage.content,
+        fullHtmlContent: existingPage.fullHtmlContent,
+        extractedElements: existingPage.extractedElements,
+        nestedLinks
+      };
+    }
+
+    // If we're not at max depth and we have nested links, recursively parse them
+    if (depth < maxDepth && nestedLinks.length > 0) {
+      console.log(`Found ${nestedLinks.length} nested links in existing page at depth ${depth}`);
+      
+      // Recursively parse nested links
+      for (const nestedLink of nestedLinks) {
+        if (!visitedUrls.has(nestedLink)) {
+          console.log(`Recursively parsing nested link at depth ${depth + 1}: ${nestedLink}`);
+          await parseConfluencePage(nestedLink, depth + 1, maxDepth, visitedUrls);
+        }
+      }
+    }
+
     return {
       pageId: existingPage.pageId,
       pageTitle: existingPage.pageTitle,
       pageUrl: existingPage.pageUrl,
       content: existingPage.content,
-      extractedElements: existingPage.extractedElements
+      fullHtmlContent: existingPage.fullHtmlContent,
+      extractedElements: existingPage.extractedElements,
+      nestedLinks
     };
   }
-  
-  // If environment variables for authentication are not set, throw an error
-  if (!process.env.CONFLUENCE_USERNAME || !process.env.CONFLUENCE_PASSWORD || !process.env.CONFLUENCE_BASE_URL) {
-    throw new Error('Confluence credentials not found in environment variables');
-  }
-
-  const CONFLUENCE_BASE_URL = process.env.CONFLUENCE_BASE_URL;
-  const USERNAME = process.env.CONFLUENCE_USERNAME;
-  const PASSWORD = process.env.CONFLUENCE_PASSWORD;
-
-  // Create auth header for Confluence (basic auth)
-  const auth = {
-    username: USERNAME,
-    password: PASSWORD
-  };
 
   try {
-    // Extract page ID from URL
-    let pageId: string | null = null;
-    
-    // Method 1: Try to extract pageId directly from URL
+    console.log(`Attempting to fetch page: ${pageUrl}`);
+
+    // Extract page ID from URL if available
+    let pageId = "";
     const pageIdMatch = pageUrl.match(/pageId=(\d+)/);
     if (pageIdMatch) {
       pageId = pageIdMatch[1];
+      console.log(`Found pageId in URL: ${pageId}`);
     }
     
-    // Method 2: Try to extract spaceKey and title from URL
-    if (!pageId) {
+    // If no pageId, try to extract from display URL format
+    let spaceKey = '';
+    let pageTitle = 'Unknown Page';
+    
+    // Check for display format: /display/SPACE/PAGE+TITLE
+    const displayMatch = pageUrl.match(/\/display\/([^/]+)\/(.+)/);
+    if (displayMatch && !pageId) {
+      spaceKey = displayMatch[1];
+      pageTitle = displayMatch[2].replace(/\+/g, ' ');
+      console.log(`Found display format URL: Space=${spaceKey}, Title=${pageTitle}`);
+    } else {
+      // Extract from viewpage.action URL if not display format
       const spaceKeyMatch = pageUrl.match(/spaceKey=([^&]+)/);
-      const titleMatch = pageUrl.match(/title=([^&]+)/);
-      
-      if (spaceKeyMatch && titleMatch) {
-        const spaceKey = decodeURIComponent(spaceKeyMatch[1]);
-        const title = decodeURIComponent(titleMatch[1]);
-        
-        const lookupUrl = `${CONFLUENCE_BASE_URL}?spaceKey=${spaceKey}&title=${title}&expand=body.storage`;
-        const response = await axios.get(lookupUrl, { auth });
-        
-        const results = response.data.results || [];
-        if (results.length > 0) {
-          pageId = results[0].id;
-        }
+      if (spaceKeyMatch) {
+        spaceKey = decodeURIComponent(spaceKeyMatch[1]);
+        console.log(`Found spaceKey in URL: ${spaceKey}`);
       }
-    }
-    
-    // Method 3: Try to extract from /display/SPACE/TITLE format
-    if (!pageId) {
-      const displayMatch = pageUrl.match(/\/display\/([^/]+)\/(.+)/);
-      if (displayMatch) {
-        const spaceKey = decodeURIComponent(displayMatch[1]);
-        const pageTitle = decodeURIComponent(displayMatch[2]);
-        
-        const lookupUrl = `${CONFLUENCE_BASE_URL}?spaceKey=${spaceKey}&title=${pageTitle}&expand=body.storage`;
-        const response = await axios.get(lookupUrl, { auth });
-        
-        const results = response.data.results || [];
-        if (results.length > 0) {
-          pageId = results[0].id;
-        }
-      }
-    }
-    
-    // Method 4: Last resort, try to get page_id from page headers
-    if (!pageId) {
-      const response = await axios.get(pageUrl, { 
-        auth,
-        maxRedirects: 5
-      });
-      
-      pageId = response.headers['x-confluence-pageid'];
-    }
-    
-    // If we still don't have a page_id, give up
-    if (!pageId) {
-      throw new Error('Could not determine page ID from URL');
-    }
 
-    // Now that we have the page_id, get the content
-    const contentUrl = `${CONFLUENCE_BASE_URL}/${pageId}?expand=body.storage`;
-    const contentResponse = await axios.get(contentUrl, { auth });
-    
-    const data = contentResponse.data;
-    const html = data.body?.storage?.value;
-    
-    if (!html) {
-      throw new Error('No content found in the page');
+      const titleMatch = pageUrl.match(/title=([^&]+)/);
+      if (titleMatch) {
+        pageTitle = decodeURIComponent(titleMatch[1]).replace(/\+/g, ' ');
+        console.log(`Found title in URL: ${pageTitle}`);
+      }
     }
     
-    // Extract content with Cheerio (Node.js version of BeautifulSoup)
-    const $ = cheerio.load(html);
-    const extractedElements: ExtractedElement[] = [];
+    // If no pageId, generate one from the URL
+    if (!pageId) {
+      pageId = Buffer.from(pageUrl).toString('base64');
+    }
     
-    // Extract structured macros (like UML, code blocks, etc.)
-    $('ac\\:structured-macro').each((_, element) => {
-      const macroType = $(element).attr('ac:name') || '';
-      const content = $(element).text().trim();
+    // Try to fetch using API token
+    let detailedContent = '';
+    let pageContent = ''; // Single variable for page content
+    let extractedElements: ExtractedElement[] = [];
+    let nestedLinks: string[] = [];
+    
+    try {
+      // Build API URL based on available parameters
+      let apiUrl = '';
       
-      extractedElements.push({
-        type: 'macro',
-        name: macroType,
-        content: content
-      });
-    });
+      if (spaceKey && pageTitle) {
+        // Format: rest/api/content?spaceKey=SPACE&title=TITLE&expand=body.storage
+        apiUrl = `${process.env.CONFLUENCE_BASE_URL}rest/api/content?spaceKey=${encodeURIComponent(spaceKey)}&title=${encodeURIComponent(pageTitle)}&expand=body.storage`;
+        console.log(`Using API URL: ${apiUrl}`);
+        
+        // Prepare both authentication methods
+        const username = process.env.CONFLUENCE_USERNAME || '';
+        const password = process.env.CONFLUENCE_PASSWORD || '';
+        const token = process.env.CONFLUENCE_API_TOKEN || '';
+        
+        // Create basic auth header
+        const basicAuth = Buffer.from(`${username}:${password}`).toString('base64');
+        
+        // Try API token first
+        try {
+          console.log(`Attempting API token authentication...`);
+          const response = await axios.get(apiUrl, {
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Accept': 'application/json'
+            }
+          });
+          
+          console.log(`API token authentication successful`);
+          console.log(`API response status: ${response.status}`);
+          
+          if (response.data && response.data.results && response.data.results.length > 0) {
+            const page = response.data.results[0];
+            console.log(`Found page: ID=${page.id}, Title=${page.title}`);
+            
+            if (page.body && page.body.storage && page.body.storage.value) {
+              // Set detailed content and page details
+              detailedContent = page.body.storage.value;
+              pageId = page.id;
+              pageTitle = page.title;
+              
+              // Parse content with Cheerio for extracting elements
+              const $ = cheerio.load(detailedContent);
+              
+              // Store the entire body content (this ensures we don't miss anything)
+              pageContent = $('body').html() || detailedContent;
+              
+              // Extract elements for structured access
+              extractElementsFromHtml(detailedContent, extractedElements);
+              
+              // Extract nested Confluence links
+              nestedLinks = extractConfluenceLinks($, process.env.CONFLUENCE_BASE_URL as string);
+              
+              console.log(`Extracted complete page content with ${extractedElements.length} structured elements and ${nestedLinks.length} nested Confluence links`);
+            }
+          }
+        } catch (tokenError: any) {
+          console.warn(`API token authentication failed: ${tokenError.message}`);
+          
+          // Fall back to basic auth
+          try {
+            console.log(`Attempting basic auth authentication...`);
+            const response = await axios.get(apiUrl, {
+              headers: {
+                'Authorization': `Basic ${basicAuth}`,
+                'Accept': 'application/json'
+              }
+            });
+            
+            console.log(`Basic auth authentication successful`);
+            console.log(`API response status: ${response.status}`);
+            
+            if (response.data && response.data.results && response.data.results.length > 0) {
+              const page = response.data.results[0];
+              console.log(`Found page: ID=${page.id}, Title=${page.title}`);
+              
+              if (page.body && page.body.storage && page.body.storage.value) {
+                // Set detailed content and page details
+                detailedContent = page.body.storage.value;
+                pageId = page.id;
+                pageTitle = page.title;
+                
+                // Parse content with Cheerio for extracting elements
+                const $ = cheerio.load(detailedContent);
+                
+                // Store the entire body content (this ensures we don't miss anything)
+                pageContent = $('body').html() || detailedContent;
+                
+                // Extract elements for structured access
+                extractElementsFromHtml(detailedContent, extractedElements);
+                
+                // Extract nested Confluence links
+                nestedLinks = extractConfluenceLinks($, process.env.CONFLUENCE_BASE_URL as string);
+                
+                console.log(`Extracted complete page content with ${extractedElements.length} structured elements and ${nestedLinks.length} nested Confluence links`);
+              }
+            }
+          } catch (basicAuthError: any) {
+            console.warn(`Basic auth authentication failed: ${basicAuthError.message}`);
+            // Continue with fallback approach
+          }
+        }
+      }
+    } catch (error: any) {
+      console.warn('Could not fetch page content via API:', error.message);
+      if (error.response) {
+        console.warn(`Response status: ${error.response.status}`);
+        console.warn(`Response data: ${JSON.stringify(error.response.data)}`);
+      }
+      // Continue with fallback approach
+    }
     
-    // Extract code blocks
-    $('pre, code').each((_, element) => {
-      extractedElements.push({
-        type: 'code',
-        content: $(element).text().trim()
-      });
-    });
-    
-    // Extract images
-    $('img').each((_, element) => {
-      extractedElements.push({
-        type: 'image',
-        src: $(element).attr('src'),
-        alt: $(element).attr('alt') || ''
-      });
-    });
-    
-    // Get the full text content
-    const fullText = $('body').text().trim();
+    // Build content - use API content if available, otherwise fallback
+    if (!pageContent) {
+      pageContent = `
+        This content was manually indexed from: ${pageUrl}
+        
+        Space Key: ${spaceKey}
+        Page Title: ${pageTitle}
+        
+        To access the complete content, please visit the Confluence page directly.
+        
+        Note: Direct content scraping was not possible due to Confluence authentication requirements.
+      `.trim();
+    }
     
     // Prepare the data
     const parsedData: ParsedConfluenceData = {
       pageId,
-      pageTitle: $('title').text() || 'Unknown',
+      pageTitle,
       pageUrl,
-      content: fullText,
-      extractedElements: extractedElements.slice(0, 15) // Limit to 15 elements
+      content: pageContent,
+      fullHtmlContent: detailedContent || '',
+      extractedElements: extractedElements.length > 0 ? extractedElements : [],
+      nestedLinks
     };
     
+    console.log(`Saving to database: pageId=${pageId}, title=${pageTitle}`);
+    
     // Store the data in MongoDB
-    await ConfluenceContent.create(parsedData);
+    try {
+      await ConfluenceContent.create(parsedData);
+      console.log(`Successfully saved to database`);
+    } catch (error: any) {
+      console.error('Database error:', error);
+      // If there's a validation error about empty content, set a placeholder
+      if (error.message && error.message.includes('content')) {
+        console.log('Content validation error, using placeholder');
+        parsedData.content = `Placeholder content for ${pageTitle} - ${new Date().toISOString()}`;
+        await ConfluenceContent.create(parsedData);
+      } else {
+        throw error; // Re-throw if it's not a content validation error
+      }
+    }
+
+    // Recursively fetch nested Confluence links if not at max depth
+    if (depth < maxDepth && nestedLinks.length > 0) {
+      console.log(`Found ${nestedLinks.length} nested links at depth ${depth}, recursively parsing...`);
+      
+      // Recursively parse nested links
+      for (const nestedLink of nestedLinks) {
+        if (!visitedUrls.has(nestedLink)) {
+          console.log(`Recursively parsing nested link at depth ${depth + 1}: ${nestedLink}`);
+          await parseConfluencePage(nestedLink, depth + 1, maxDepth, visitedUrls);
+        }
+      }
+    }
     
     return parsedData;
   } catch (error) {
@@ -177,18 +310,300 @@ export async function parseConfluencePage(pageUrl: string): Promise<ParsedConflu
   }
 }
 
-export async function searchConfluenceContent(query: string): Promise<any[]> {
+// New helper function to extract Confluence links from HTML
+function extractConfluenceLinks($: any, baseUrl: string): string[] {
+  const links = new Set<string>();
+  
+  // Find all links in the page
+  $('a').each((i: number, el: any) => {
+    const href = $(el).attr('href');
+    
+    if (href) {
+      // Check if the link is a Confluence link
+      const isConfluenceLink = href.includes('confluence.') || 
+                              href.includes('/display/') || 
+                              href.includes('/pages/') ||
+                              href.includes('viewpage.action') ||
+                              (baseUrl && href.startsWith(baseUrl));
+      
+      if (isConfluenceLink) {
+        // Handle relative URLs
+        let fullUrl = href;
+        if (href.startsWith('/')) {
+          // Convert relative URL to absolute using the base URL
+          fullUrl = baseUrl ? baseUrl.replace(/\/$/, '') + href : href;
+        }
+        
+        links.add(fullUrl);
+      }
+    }
+  });
+  
+  return Array.from(links);
+}
+
+// Helper function to extract elements from HTML
+function extractElementsFromHtml(html: string, extractedElements: ExtractedElement[]) {
+  const $ = cheerio.load(html);
+  
+  // Extract all content blocks from the page
+  $('body > *').each((i, el) => {
+    const $el = $(el);
+    const tagName = $el.prop('tagName').toLowerCase();
+    const className = $el.attr('class') || '';
+    const id = $el.attr('id') || '';
+    const text = $el.text().trim();
+    
+    // Skip empty elements
+    if (!text) return;
+    
+    // Determine element type
+    let type = 'content';
+    if (tagName.match(/^h[1-6]$/)) {
+      type = 'heading';
+    } else if (tagName === 'p') {
+      type = 'paragraph';
+    } else if (tagName === 'pre' || tagName === 'code' || className.includes('code')) {
+      type = 'code';
+    } else if (tagName === 'table') {
+      type = 'table';
+    } else if (tagName === 'ul' || tagName === 'ol') {
+      type = 'list';
+    } else if (tagName === 'img') {
+      type = 'image';
+    } else if (tagName === 'a') {
+      type = 'link';
+    } else if (className.includes('confluence-macro')) {
+      type = 'macro';
+    }
+    
+    // Create element object
+    const element: ExtractedElement = { type };
+    
+    // Add name for specific elements
+    if (type === 'heading') {
+      element.name = tagName;
+    } else if (type === 'list') {
+      element.name = tagName;
+    } else if (type === 'macro') {
+      element.name = $el.attr('data-macro-name') || id || className;
+    }
+    
+    // Add content
+    if (type === 'table') {
+      let tableContent = '';
+      
+      // Process table headers
+      $el.find('th').each((i, th) => {
+        tableContent += $(th).text().trim() + ' | ';
+      });
+      
+      if (tableContent) {
+        tableContent += '\n';
+      }
+      
+      // Process table rows
+      $el.find('tr').each((i, tr) => {
+        $(tr).find('td').each((j, td) => {
+          tableContent += $(td).text().trim() + ' | ';
+        });
+        tableContent += '\n';
+      });
+      
+      element.content = tableContent.trim();
+    } else if (type === 'image') {
+      element.src = $el.attr('src');
+      element.alt = $el.attr('alt');
+    } else if (type === 'link') {
+      element.content = text;
+      element.src = $el.attr('href');
+    } else {
+      element.content = text;
+    }
+    
+    extractedElements.push(element);
+  });
+  
+  // Also extract specific Confluence elements that might be nested
+  $('.confluence-macro, .confluenceTd, .confluenceTh').each((i, el) => {
+    const $el = $(el);
+    const className = $el.attr('class') || '';
+    const macroName = $el.attr('data-macro-name') || '';
+    const text = $el.text().trim();
+    
+    if (text && !$el.find('.confluence-macro').length) {
+      extractedElements.push({
+        type: 'macro',
+        name: macroName || className,
+        content: text
+      });
+    }
+  });
+  
+  // Extract structured data from specific Confluence elements
+  $('.task-list, .status-macro').each((i, el) => {
+    const $el = $(el);
+    extractedElements.push({
+      type: 'structured-data',
+      name: $el.attr('class'),
+      content: $el.text().trim()
+    });
+  });
+  
+  // Recursively extract child elements from complex blocks and panels
+  $('.panel, .expand-container').each((i, el) => {
+    const $el = $(el);
+    const panelTitle = $el.find('.panel-heading, .expand-header').text().trim();
+    const panelContent = $el.find('.panel-body, .expand-content').text().trim();
+    
+    if (panelTitle || panelContent) {
+      extractedElements.push({
+        type: 'panel',
+        name: panelTitle,
+        content: panelContent
+      });
+    }
+  });
+  
+  // Extract attachments and linked files
+  $('a.confluence-embedded-file, .attachment').each((i, el) => {
+    const $el = $(el);
+    const attachmentName = $el.text().trim() || $el.attr('title') || 'Unnamed attachment';
+    const href = $el.attr('href') || '';
+    
+    extractedElements.push({
+      type: 'attachment',
+      name: attachmentName,
+      src: href
+    });
+  });
+
+  // Extract user mentions and profiles
+  $('a.confluence-userlink, .user-mention').each((i, el) => {
+    const $el = $(el);
+    const username = $el.attr('data-username') || $el.text().trim();
+    
+    extractedElements.push({
+      type: 'user-mention',
+      name: username,
+      content: $el.text().trim()
+    });
+  });
+
+  // Extract embedded content (iframes, videos, etc.)
+  $('iframe, embed, object, .video-container').each((i, el) => {
+    const $el = $(el);
+    const src = $el.attr('src') || '';
+    const title = $el.attr('title') || 'Embedded content';
+    
+    extractedElements.push({
+      type: 'embedded-content',
+      name: title,
+      src: src,
+      content: $el.html() || ''
+    });
+  });
+
+  // Extract special Confluence formatting elements
+  $('.code-block, .preformatted, .syntaxhighlighter').each((i, el) => {
+    const $el = $(el);
+    const language = $el.attr('data-language') || 'unknown';
+    
+    extractedElements.push({
+      type: 'code-block',
+      name: language,
+      content: $el.text().trim()
+    });
+  });
+
+  // Extract comments and notes
+  $('.confluence-information-macro, .note, .warning, .info').each((i, el) => {
+    const $el = $(el);
+    const macroType = $el.hasClass('note') ? 'note' : 
+                      $el.hasClass('warning') ? 'warning' : 
+                      $el.hasClass('info') ? 'info' : 'information';
+    
+    extractedElements.push({
+      type: 'information',
+      name: macroType,
+      content: $el.text().trim()
+    });
+  });
+  
+  console.log(`Extracted ${extractedElements.length} elements from the page`);
+}
+
+export async function searchConfluenceContent(query: string, limit: number = 5): Promise<any[]> {
   await connectToDatabase();
   
-  // Perform text search in the database
-  const results = await ConfluenceContent.find(
-    { $text: { $search: query } },
-    { score: { $meta: 'textScore' } }
-  )
-    .sort({ score: { $meta: 'textScore' } })
-    .limit(5)
-    .lean()
-    .exec();
+  // Split query into keywords for better search results
+  const queryKeywords = query.split(/\s+/)
+    .filter(word => word.length > 2)  // Filter out short words
+    .map(word => word.replace(/['".,;:!?(){}[\]]/g, '')) // Remove punctuation
+    .filter(Boolean); // Remove empty strings
   
-  return results;
+  try {
+    // First attempt: Use the text index search only (most performant)
+    const textSearchResults = await ConfluenceContent.find(
+      { $text: { $search: query } },
+      { score: { $meta: 'textScore' } }
+    )
+      .sort({ score: { $meta: 'textScore' } })
+      .limit(limit)
+      .lean()
+      .exec();
+    
+    if (textSearchResults.length > 0) {
+      return textSearchResults;
+    }
+    
+    // Second attempt: If text search finds nothing, try regex search on content
+    const contentResults = await ConfluenceContent.find({
+      content: { 
+        $regex: queryKeywords.length > 0 
+          ? queryKeywords.join('|') 
+          : query, 
+        $options: 'i' 
+      }
+    })
+      .limit(limit)
+      .lean()
+      .exec();
+    
+    if (contentResults.length > 0) {
+      return contentResults;
+    }
+    
+    // Last attempt: Try regex search on page titles
+    const titleResults = await ConfluenceContent.find({
+      pageTitle: { 
+        $regex: queryKeywords.length > 0 
+          ? queryKeywords.join('|') 
+          : query, 
+        $options: 'i' 
+      }
+    })
+      .limit(limit)
+      .lean()
+      .exec();
+    
+    return titleResults;
+  } catch (error) {
+    console.error('Error searching Confluence content:', error);
+    
+    // Fallback to a simpler regex search on just content if all else fails
+    try {
+      const fallbackResults = await ConfluenceContent.find({
+        content: { $regex: query.split(' ')[0], $options: 'i' }
+      })
+        .limit(limit)
+        .lean()
+        .exec();
+      
+      return fallbackResults;
+    } catch (fallbackError) {
+      console.error('Fallback search also failed:', fallbackError);
+      return [];
+    }
+  }
 } 

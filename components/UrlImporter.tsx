@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { FaLink, FaSpinner, FaExternalLinkAlt } from 'react-icons/fa';
+import { FaLink, FaSpinner, FaExternalLinkAlt, FaInfoCircle, FaLock } from 'react-icons/fa';
 
 interface ImportedPage {
   pageTitle: string;
@@ -42,7 +42,7 @@ const UrlImporter: React.FC = () => {
     }
     
     setIsLoading(true);
-    setStatus({ message: 'Parsing Confluence page...', type: 'info' });
+    setStatus({ message: 'Processing Confluence page URL...', type: 'info' });
     
     try {
       const response = await fetch('/api/parse-confluence', {
@@ -61,7 +61,7 @@ const UrlImporter: React.FC = () => {
       
       // Update success message
       setStatus({
-        message: `Successfully imported "${data.data.pageTitle}"`,
+        message: `Successfully indexed "${data.data.pageTitle}" (Note: Content may be limited based on authentication level)`,
         type: 'success',
       });
       
@@ -93,6 +93,19 @@ const UrlImporter: React.FC = () => {
     <div className="bg-white rounded-lg shadow-md p-4">
       <h2 className="text-lg font-semibold mb-4">Import Confluence Page</h2>
       
+      <div className="bg-blue-50 p-3 rounded-md mb-4 flex items-start">
+        <FaLock className="text-blue-500 mt-1 mr-2 flex-shrink-0" />
+        <div className="text-sm text-blue-700">
+          <p className="font-medium mb-1">Authentication Update</p>
+          <p>Basic authentication has been disabled on the Confluence instance. To access full content, an API token is needed.</p>
+          <ul className="list-disc ml-5 mt-2">
+            <li>To generate a token, go to <a href="https://id.atlassian.com/manage-profile/security/api-tokens" target="_blank" rel="noopener noreferrer" className="underline">Atlassian API tokens</a></li>
+            <li>Add the token to the .env file as CONFLUENCE_API_TOKEN</li>
+          </ul>
+          <p className="mt-2">Until configured, only limited metadata will be stored for pages.</p>
+        </div>
+      </div>
+      
       <form onSubmit={handleSubmit}>
         <div className="flex items-center mb-4">
           <div className="relative flex-1">
@@ -113,7 +126,7 @@ const UrlImporter: React.FC = () => {
             disabled={isLoading}
             className="ml-3 inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
           >
-            {isLoading ? <FaSpinner className="animate-spin mr-2" /> : 'Import'}
+            {isLoading ? <FaSpinner className="animate-spin mr-2" /> : 'Index'}
           </button>
         </div>
       </form>
@@ -133,7 +146,7 @@ const UrlImporter: React.FC = () => {
       )}
       
       <div className="mt-6">
-        <h3 className="text-md font-medium mb-2">Recently Imported Pages</h3>
+        <h3 className="text-md font-medium mb-2">Recently Indexed Pages</h3>
         {recentImports.length > 0 ? (
           <ul className="space-y-2">
             {recentImports.map((page, index) => (
@@ -155,7 +168,7 @@ const UrlImporter: React.FC = () => {
           </ul>
         ) : (
           <div className="text-sm text-gray-500">
-            Import your first Confluence page to see it here.
+            Index your first Confluence page to see it here.
           </div>
         )}
       </div>

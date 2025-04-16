@@ -1,0 +1,23 @@
+{
+  "timestamp": "2025-04-16T20:34:42.877Z",
+  "url": "http://localhost:3000/api/chat",
+  "method": "POST",
+  "requestBody": {
+    "query": "Hello, this is a diagnostic test message",
+    "sessionId": "diagnostic-session"
+  },
+  "responseStatus": 200,
+  "responseHeaders": {
+    "cache-control": "no-store, must-revalidate",
+    "connection": "close",
+    "content-encoding": "gzip",
+    "content-type": "text/html; charset=utf-8",
+    "date": "Wed, 16 Apr 2025 20:34:42 GMT",
+    "transfer-encoding": "chunked",
+    "vary": "RSC, Next-Router-State-Tree, Next-Router-Prefetch, Next-Url, Accept-Encoding",
+    "x-powered-by": "Next.js"
+  },
+  "responseType": "HTML",
+  "responseSummary": "<!DOCTYPE html><html lang=\"en\"><head><meta charSet=\"utf-8\"/><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/><link rel=\"preload\" href=\"/_next/static/media/a34f9d1faa5f3315-s.p.woff2\" as=\"font\" crossorigin=\"\" type=\"font/woff2\"/><link rel=\"stylesheet\" href=\"/_next/static/css/app/layout.css?v=1744835682805\" data-precedence=\"next_static/css/app/layout.css\"/><link rel=\"preload\" as=\"script\" fetchPriority=\"low\" href=\"/_next/static/chunks/webpack.js?v=1744835682805\"/><script src=\"/_next/static/chunks/main-app.js?v=1744835682805\" async=\"\"></script><script src=\"/_next/static/chunks/app-pages-internals.js\" async=\"\"></script><script src=\"/_next/static/chunks/app/layout.js\" async=\"\"></script><script src=\"/_next/static/chunks/app/login/page.js\" async=\"\"></script><title>AVOS Chatbot</title><meta name=\"description\" content=\"Intelligent assistant for NVIDIA employees\"/><meta name=\"next-size-adjust\"/><script src=\"/_next/static/chunks/polyfills.js\" noModule=\"\"></script></head><body cl...",
+  "parsedData": null
+}

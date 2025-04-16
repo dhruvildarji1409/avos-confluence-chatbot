@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chat Interface Test</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    
+    body {
+      font-family: Arial, sans-serif;
+      background-color: #f5f5f5;
+      padding: 20px;
+    }
+    
+    .container {
+      max-width: 800px;
+      margin: 0 auto;
+      background-color: white;
+      border-radius: 10px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+      overflow: hidden;
+    }
+    
+    .chat-heading {
+      background-color: #3b82f6;
+      color: white;
+      padding: 15px;
+      text-align: center;
+    }
+    
+    .messages {
+      height: 400px;
+      overflow-y: auto;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 15px;
+    }
+    
+    .message {
+      max-width: 70%;
+      padding: 10px 15px;
+      border-radius: 15px;
+      line-height: 1.4;
+    }
+    
+    .user-message {
+      align-self: flex-end;
+      background-color: #3b82f6;
+      color: white;
+      border-top-right-radius: 2px;
+    }
+    
+    .bot-message {
+      align-self: flex-start;
+      background-color: #f0f0f0;
+      color: #333;
+      border-top-left-radius: 2px;
+    }
+    
+    .error-message {
+      background-color: #fee2e2;
+      color: #b91c1c;
+    }
+    
+    .input-form {
+      display: flex;
+      padding: 15px;
+      background-color: #f3f4f6;
+      border-top: 1px solid #e5e7eb;
+    }
+    
+    .input-form input {
+      flex: 1;
+      padding: 12px 15px;
+      border: 1px solid #e5e7eb;
+      border-radius: 30px;
+      outline: none;
+    }
+    
+    .input-form input:focus {
+      border-color: #3b82f6;
+    }
+    
+    .input-form button {
+      margin-left: 10px;
+      padding: 10px 20px;
+      background-color: #3b82f6;
+      color: white;
+      border: none;
+      border-radius: 30px;
+      cursor: pointer;
+      font-weight: bold;
+    }
+    
+    .input-form button:hover {
+      background-color: #2563eb;
+    }
+    
+    .input-form button:disabled {
+      background-color: #93c5fd;
+      cursor: not-allowed;
+    }
+    
+    .test-controls {
+      margin-top: 20px;
+      padding: 15px;
+      background-color: #f9fafb;
+      border-radius: 8px;
+      border: 1px solid #e5e7eb;
+    }
+    
+    .test-controls h3 {
+      margin-bottom: 10px;
+      color: #374151;
+    }
+    
+    .test-endpoints {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+    
+    .test-endpoints button {
+      padding: 8px 12px;
+      background-color: #f3f4f6;
+      border: 1px solid #d1d5db;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    
+    .test-endpoints button:hover {
+      background-color: #e5e7eb;
+    }
+    
+    .test-endpoints button.active {
+      background-color: #dbeafe;
+      border-color: #93c5fd;
+      font-weight: bold;
+    }
+    
+    .status {
+      margin-top: 10px;
+      padding: 8px;
+      background-color: #f3f4f6;
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="chat-heading">
+      <h2>AVOS Chat Interface Test</h2>
+    </div>
+    
+    <div class="messages" id="messages"></div>
+    
+    <form class="input-form" id="chatForm">
+      <input type="text" id="messageInput" placeholder="Type your message...">
+      <button type="submit" id="sendButton">Send</button>
+    </form>
+  </div>
+  
+  <div class="test-controls">
+    <h3>Test Controls</h3>
+    <div class="test-endpoints">
+      <button id="testEndpoint" class="active">Test Mock API (port 3001)</button>
+      <button id="realEndpoint">Real API (port 3000)</button>
+    </div>
+    <div>
+      <label>
+        <input type="checkbox" id="simulateError"> Simulate Error Response
+      </label>
+    </div>
+    <div class="status" id="statusMessage">Status: Ready to test</div>
+  </div>
+  
+  <script>
+    document.addEventListener('DOMContentLoaded', function() {
+      const messagesContainer = document.getElementById('messages');
+      const chatForm = document.getElementById('chatForm');
+      const messageInput = document.getElementById('messageInput');
+      const sendButton = document.getElementById('sendButton');
+      const testEndpointBtn = document.getElementById('testEndpoint');
+      const realEndpointBtn = document.getElementById('realEndpoint');
+      const simulateErrorCheckbox = document.getElementById('simulateError');
+      const statusMessage = document.getElementById('statusMessage');
+      
+      let apiUrl = 'http://localhost:3001/api/chat'; // Default to test API
+      let isLoading = false;
+      let sessionId = localStorage.getItem('chatSessionId') || null;
+      
+      // Toggle between test and real API
+      testEndpointBtn.addEventListener('click', function() {
+        apiUrl = 'http://localhost:3001/api/chat';
+        testEndpointBtn.classList.add('active');
+        realEndpointBtn.classList.remove('active');
+        statusMessage.textContent = 'Status: Using test mock API on port 3001';
+      });
+      
+      realEndpointBtn.addEventListener('click', function() {
+        apiUrl = '/api/chat'; // Use relative URL for real API
+        realEndpointBtn.classList.add('active');
+        testEndpointBtn.classList.remove('active');
+        statusMessage.textContent = 'Status: Using real API on port 3000';
+      });
+      
+      // Add message to the chat
+      function addMessage(content, isUser = false, isError = false) {
+        const messageElement = document.createElement('div');
+        messageElement.classList.add('message');
+        
+        if (isUser) {
+          messageElement.classList.add('user-message');
+        } else {
+          messageElement.classList.add('bot-message');
+          if (isError) {
+            messageElement.classList.add('error-message');
+          }
+        }
+        
+        messageElement.textContent = content;
+        messagesContainer.appendChild(messageElement);
+        
+        // Scroll to bottom
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+      }
+      
+      // Handle form submission
+      chatForm.addEventListener('submit', async function(e) {
+        e.preventDefault();
+        
+        const message = messageInput.value.trim();
+        if (!message || isLoading) return;
+        
+        // Add user message
+        addMessage(message, true);
+        messageInput.value = '';
+        
+        // Set loading state
+        isLoading = true;
+        sendButton.disabled = true;
+        statusMessage.textContent = 'Status: Sending request...';
+        
+        try {
+          // Simulate error if checkbox is checked
+          if (simulateErrorCheckbox.checked) {
+            throw new Error('Simulated error response');
+          }
+          
+          console.log('Sending request to:', apiUrl);
+          const response = await fetch(apiUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              query: message,
+              sessionId
+            }),
+          });
+          
+          if (!response.ok) {
+            throw new Error(`Server error: ${response.status}`);
+          }
+          
+          // Parse response
+          const data = await response.json();
+          console.log('Response data:', data);
+          
+          // Save session ID if it's the first message
+          if (data.sessionId && !sessionId) {
+            sessionId = data.sessionId;
+            localStorage.setItem('chatSessionId', sessionId);
+          }
+          
+          // Add bot message
+          addMessage(data.answer || 'No response from server', false, data.isError || false);
+          statusMessage.textContent = 'Status: Response received successfully';
+          
+        } catch (error) {
+          console.error('Chat error:', error);
+          addMessage(`Sorry, an error occurred: ${error.message}`, false, true);
+          statusMessage.textContent = `Status: Error - ${error.message}`;
+        } finally {
+          isLoading = false;
+          sendButton.disabled = false;
+        }
+      });
+      
+      // Initial status message
+      statusMessage.textContent = 'Status: Ready to test. Make sure test-api.js is running on port 3001';
+    });
+  </script>
+</body>
+</html> 
