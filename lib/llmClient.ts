@@ -258,7 +258,12 @@ export class LlmClient {
         if (typeof item === 'object') {
           // Format page content
           if (item.pageTitle && item.content) {
-            formattedContent += `# ${item.pageTitle}\n\n${extractRelevantContent(item.content, 800)}\n\n`;
+            formattedContent += `# ${item.pageTitle}\n\n`;
+            
+            // Process content to specially mark code blocks and limit to relevance
+            const extractedContent = extractRelevantContent(item.content, 800);
+            const processedContent = this.processContentWithCodeBlocks(extractedContent);
+            formattedContent += `${processedContent}\n\n`;
           }
           
           // Add code snippets if available
@@ -270,7 +275,8 @@ export class LlmClient {
             if (codeSnippets.length > 0) {
               formattedContent += "## Code Snippets\n\n";
               for (const snippet of codeSnippets.slice(0, 3)) {
-                formattedContent += `\`\`\`\n${snippet.content}\n\`\`\`\n\n`;
+                // Add special markers to indicate exact code blocks
+                formattedContent += `<EXACT_CODE_BLOCK>\n\`\`\`\n${snippet.content}\n\`\`\`\n</EXACT_CODE_BLOCK>\n\n`;
               }
             }
           }
@@ -293,6 +299,58 @@ export class LlmClient {
     }
     
     return formattedContent;
+  }
+  
+  /**
+   * Process content to specially mark code blocks for preservation
+   */
+  private processContentWithCodeBlocks(content: string): string {
+    if (!content) return '';
+    
+    const lines = content.split('\n');
+    let processedLines: string[] = [];
+    let inCodeBlock = false;
+    let codeBlockLang = '';
+    let codeBlockContent: string[] = [];
+    
+    for (const line of lines) {
+      // Check for code block start
+      if (line.trim().startsWith('```') && !inCodeBlock) {
+        inCodeBlock = true;
+        codeBlockLang = line.trim().replace('```', '').trim();
+        codeBlockContent = [line]; // Start collecting code block
+      } 
+      // Check for code block end
+      else if (line.trim() === '```' && inCodeBlock) {
+        inCodeBlock = false;
+        codeBlockContent.push(line); // Add closing marker
+        
+        // Add special tags around code block
+        processedLines.push('<EXACT_CODE_BLOCK>');
+        processedLines.push(...codeBlockContent);
+        processedLines.push('</EXACT_CODE_BLOCK>');
+        
+        codeBlockContent = []; // Reset code block content
+      } 
+      // Inside code block - collect content
+      else if (inCodeBlock) {
+        codeBlockContent.push(line);
+      } 
+      // Regular content
+      else {
+        processedLines.push(line);
+      }
+    }
+    
+    // In case we ended with an unclosed code block
+    if (inCodeBlock && codeBlockContent.length > 0) {
+      processedLines.push('<EXACT_CODE_BLOCK>');
+      processedLines.push(...codeBlockContent);
+      processedLines.push('```'); // Add closing marker
+      processedLines.push('</EXACT_CODE_BLOCK>');
+    }
+    
+    return processedLines.join('\n');
   }
 }
 

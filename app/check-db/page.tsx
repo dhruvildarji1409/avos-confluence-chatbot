@@ -39,26 +39,39 @@ export default function CheckDatabase() {
   const fetchData = async () => {
     try {
       setLoading(true);
+      setError(null);
+      
+      console.log('Fetching Confluence data from API...');
       const response = await fetch('/api/check-confluence-data');
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`API error (${response.status}): ${errorText}`);
+      }
+      
       const result = await response.json();
+      console.log(`API response received with ${result.count} items`);
       
       if (result.success) {
         setData(result.data);
         // Reset selected items
         setSelectedItems([]);
       } else {
+        console.error('API returned error:', result.error);
         setError(result.error || 'Failed to fetch data');
       }
     } catch (err) {
-      setError('Error fetching data');
-      console.error(err);
+      console.error('Error fetching data:', err);
+      setError(`Error fetching data: ${(err as Error).message}`);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
+    console.log('Component mounted, fetching data...');
     fetchData();
+    // No dependencies needed as we want to run this only on component mount
   }, []);
 
   // Close modal when clicking outside

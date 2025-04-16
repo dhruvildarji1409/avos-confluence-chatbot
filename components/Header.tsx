@@ -2,7 +2,7 @@
 
 import React from 'react';
 import Link from 'next/link';
-import { FaRobot, FaLock, FaComments, FaUser, FaSignOutAlt } from 'react-icons/fa';
+import { FaRobot, FaComments, FaUser, FaSignOutAlt } from 'react-icons/fa';
 import { useAuth } from './AuthCheck';
 
 const Header: React.FC = () => {
@@ -50,11 +50,6 @@ const Header: React.FC = () => {
               </Link>
             </div>
           )}
-          
-          <div className="flex items-center space-x-2 ml-4">
-            <FaLock className="text-yellow-400" />
-            <span className="text-sm">Restricted Access</span>
-          </div>
         </div>
       </div>
     </header>

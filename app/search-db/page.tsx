@@ -35,30 +35,42 @@ export default function SearchDatabase() {
       setLoading(true);
       setError(null);
       
+      console.log(`Searching Confluence data for: "${query}"`);
       const response = await fetch(`/api/search-confluence?q=${encodeURIComponent(query)}`);
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`API error (${response.status}): ${errorText}`);
+      }
+      
       const result = await response.json();
+      console.log(`API response received with ${result.count} items`);
       
       if (result.success) {
         setData(result.data);
       } else {
+        console.error('API returned error:', result.error);
         setError(result.error || 'Failed to search data');
       }
     } catch (err) {
-      setError('Error searching data');
-      console.error(err);
+      console.error('Error searching data:', err);
+      setError(`Error searching data: ${(err as Error).message}`);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
+    console.log('Component mounted, loading initial data...');
     // Load initial data (most recent entries)
     performSearch();
+    // No dependencies needed as we want to run this only on component mount
   }, []);
 
   // Handle enter key press
-  const handleKeyPress = (e: React.KeyboardEvent) => {
+  const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
+      e.preventDefault();
       performSearch();
     }
   };
@@ -101,7 +113,7 @@ export default function SearchDatabase() {
           type="text"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          onKeyPress={handleKeyPress}
+          onKeyDown={handleKeyPress}
           placeholder="Search for content..."
           className="border border-gray-300 p-2 rounded-l w-full"
         />

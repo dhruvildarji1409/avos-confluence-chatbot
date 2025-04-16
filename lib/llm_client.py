@@ -138,31 +138,80 @@ def get_azure_client():
 def format_db_data_for_llm(db_data):
     """
     Format data retrieved from database to be included in LLM context.
-    This helps provide structured information to the LLM.
+    This helps provide structured information to the LLM while preserving
+    code blocks exactly as they appear.
     """
     if not db_data:
         return ""
+    
+    # Special header to signal the importance of preserving code blocks    
+    formatted_data = """
+IMPORTANT: The following information contains code blocks that must be preserved EXACTLY as shown,
+with their original formatting, indentation, comments, and whitespace.
+===== DATABASE INFORMATION START =====
+
+"""
         
     if isinstance(db_data, list):
         # Format list of records
-        formatted_data = "Retrieved information:\n\n"
         for i, item in enumerate(db_data):
-            formatted_data += f"Item {i+1}:\n"
             if isinstance(item, dict):
+                # Add page title if available
+                if "pageTitle" in item:
+                    formatted_data += f"## {item.get('pageTitle')}\n\n"
+                
+                # Add content with special handling for code blocks
+                if "content" in item:
+                    content = item.get("content", "")
+                    # Try to detect and specially mark code blocks
+                    lines = content.split('\n')
+                    in_code_block = False
+                    code_block_lang = ""
+                    
+                    for line in lines:
+                        # Detect code block markers in Markdown or HTML
+                        if line.strip().startswith("```") and not in_code_block:
+                            in_code_block = True
+                            # Try to extract language info
+                            code_block_lang = line.strip().replace("```", "").strip()
+                            # Add special marker for code block start
+                            formatted_data += f"\n<CODE_BLOCK_START lang=\"{code_block_lang}\">\n"
+                            formatted_data += line + "\n"
+                        elif line.strip() == "```" and in_code_block:
+                            in_code_block = False
+                            formatted_data += line + "\n"
+                            # Add special marker for code block end
+                            formatted_data += "<CODE_BLOCK_END>\n\n"
+                        else:
+                            formatted_data += line + "\n"
+                    
+                    formatted_data += "\n"
+                
+                # Add other fields from the item
                 for key, value in item.items():
-                    formatted_data += f"- {key}: {value}\n"
+                    if key not in ["pageTitle", "content"]:
+                        formatted_data += f"- {key}: {value}\n"
+                
+                formatted_data += "\n---\n\n"
             else:
-                formatted_data += f"- {item}\n"
-            formatted_data += "\n"
+                formatted_data += f"Item {i+1}:\n{item}\n\n"
     elif isinstance(db_data, dict):
         # Format dictionary
-        formatted_data = "Retrieved information:\n\n"
+        formatted_data += "Retrieved information:\n\n"
         for key, value in db_data.items():
             formatted_data += f"- {key}: {value}\n"
     else:
         # Just convert to string if not a recognized format
-        formatted_data = f"Retrieved information:\n\n{db_data}"
+        formatted_data += f"Retrieved information:\n\n{db_data}"
         
+    formatted_data += "\n===== DATABASE INFORMATION END =====\n"
+    
+    # Add instruction for handling code blocks
+    formatted_data += """
+REMEMBER: When including code blocks in your response, reproduce them EXACTLY as shown above,
+with the same formatting, indentation, comments, and whitespace. Do not modify any code.
+"""
+    
     return formatted_data
 
 def enhance_response_formatting(response):

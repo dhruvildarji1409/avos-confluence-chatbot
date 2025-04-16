@@ -30,16 +30,47 @@ export default function ChatsPage() {
   const fetchChats = async () => {
     try {
       setLoading(true);
-      const response = await fetch('/api/chats');
+      setError(null);
+      console.log('Fetching chats...');
+      
+      // Add timeout to the fetch request
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+      
+      const response = await fetch('/api/chats', {
+        method: 'GET',
+        cache: 'no-store',
+        signal: controller.signal
+      });
+      
+      clearTimeout(timeoutId);
       
       if (!response.ok) {
-        throw new Error('Failed to fetch chats');
+        console.error('Failed to fetch chats, status:', response.status);
+        let errorText;
+        try {
+          const errorJson = await response.json();
+          errorText = errorJson.error || JSON.stringify(errorJson);
+        } catch (e) {
+          errorText = await response.text();
+        }
+        console.error('Error response:', errorText);
+        throw new Error(`Failed to fetch chats: ${response.status} - ${errorText}`);
       }
       
       const data = await response.json();
+      console.log(`Retrieved ${data.chats?.length || 0} chats`);
       setChats(data.chats || []);
     } catch (err: any) {
-      setError(err.message || 'An error occurred');
+      console.error('Error fetching chats:', err);
+      
+      if (err.name === 'AbortError') {
+        setError('Request timed out. The server might be overloaded or unavailable.');
+      } else if (err.message.includes('Failed to fetch')) {
+        setError('Network error. Please check your connection and try again.');
+      } else {
+        setError(err.message || 'An error occurred while loading your chats');
+      }
     } finally {
       setLoading(false);
     }
@@ -53,6 +84,8 @@ export default function ChatsPage() {
   // Create a new chat
   const createNewChat = async () => {
     try {
+      console.log('Creating new chat with title:', newChatTitle || 'New Chat');
+      
       const response = await fetch('/api/chats', {
         method: 'POST',
         headers: {
@@ -61,13 +94,21 @@ export default function ChatsPage() {
         body: JSON.stringify({
           title: newChatTitle || 'New Chat',
         }),
+        cache: 'no-store'
       });
       
       if (!response.ok) {
-        throw new Error('Failed to create chat');
+        console.error('Failed to create chat, status:', response.status);
+        const errorText = await response.text();
+        console.error('Error response:', errorText);
+        throw new Error(`Failed to create chat: ${response.status}`);
       }
       
       const newChat = await response.json();
+      console.log('Chat created successfully:', newChat);
+      
+      // Clear any existing session ID
+      localStorage.removeItem('chatSessionId');
       
       // Close modal and reset form
       setShowNewChatModal(false);
@@ -76,6 +117,7 @@ export default function ChatsPage() {
       // Navigate to the new chat
       router.push(`/chat/${newChat.id}`);
     } catch (err: any) {
+      console.error('Error in createNewChat:', err);
       setError(err.message || 'Failed to create chat');
     }
   };
@@ -87,17 +129,26 @@ export default function ChatsPage() {
     }
     
     try {
+      console.log('Deleting chat:', id);
+      
       const response = await fetch(`/api/chats/${id}`, {
         method: 'DELETE',
+        cache: 'no-store'
       });
       
       if (!response.ok) {
-        throw new Error('Failed to delete chat');
+        console.error('Failed to delete chat, status:', response.status);
+        const errorText = await response.text();
+        console.error('Error response:', errorText);
+        throw new Error(`Failed to delete chat: ${response.status}`);
       }
+      
+      console.log('Chat deleted successfully:', id);
       
       // Update the chat list
       setChats(chats.filter(chat => chat.id !== id));
     } catch (err: any) {
+      console.error('Error in deleteChat:', err);
       setError(err.message || 'Failed to delete chat');
     }
   };
@@ -107,6 +158,8 @@ export default function ChatsPage() {
     if (!editChatId) return;
     
     try {
+      console.log('Updating chat title:', editChatId, editChatTitle);
+      
       const response = await fetch(`/api/chats/${editChatId}`, {
         method: 'PATCH',
         headers: {
@@ -115,13 +168,18 @@ export default function ChatsPage() {
         body: JSON.stringify({
           title: editChatTitle,
         }),
+        cache: 'no-store'
       });
       
       if (!response.ok) {
-        throw new Error('Failed to update chat');
+        console.error('Failed to update chat, status:', response.status);
+        const errorText = await response.text();
+        console.error('Error response:', errorText);
+        throw new Error(`Failed to update chat: ${response.status}`);
       }
       
       const updatedChat = await response.json();
+      console.log('Chat updated successfully:', updatedChat);
       
       // Update the chat list
       setChats(chats.map(chat => 
@@ -134,6 +192,7 @@ export default function ChatsPage() {
       setEditChatId(null);
       setEditChatTitle('');
     } catch (err: any) {
+      console.error('Error in updateChatTitle:', err);
       setError(err.message || 'Failed to update chat');
     }
   };
@@ -141,6 +200,8 @@ export default function ChatsPage() {
   // Share a chat
   const shareChat = async (id: string) => {
     try {
+      console.log('Sharing chat:', id);
+      
       const response = await fetch(`/api/chats/${id}/share`, {
         method: 'POST',
         headers: {
@@ -149,13 +210,18 @@ export default function ChatsPage() {
         body: JSON.stringify({
           action: 'share',
         }),
+        cache: 'no-store'
       });
       
       if (!response.ok) {
-        throw new Error('Failed to share chat');
+        console.error('Failed to share chat, status:', response.status);
+        const errorText = await response.text();
+        console.error('Error response:', errorText);
+        throw new Error(`Failed to share chat: ${response.status}`);
       }
       
       const data = await response.json();
+      console.log('Chat shared successfully:', data);
       
       // Update the chat in the list
       setChats(chats.map(chat => 
@@ -166,6 +232,7 @@ export default function ChatsPage() {
       setShareCode(data.shareCode);
       setShareUrl(data.shareUrl);
     } catch (err: any) {
+      console.error('Error in shareChat:', err);
       setError(err.message || 'Failed to share chat');
     }
   };
@@ -181,6 +248,7 @@ export default function ChatsPage() {
     if (shareUrl) {
       navigator.clipboard.writeText(shareUrl)
         .then(() => {
+          console.log('Share URL copied to clipboard');
           // Show temporary notification
           const notification = document.createElement('div');
           notification.className = 'fixed bottom-4 right-4 bg-green-600 text-white py-2 px-4 rounded-md shadow-lg';
@@ -218,8 +286,23 @@ export default function ChatsPage() {
         </div>
         
         {error && (
-          <div className="bg-red-50 text-red-600 p-4 rounded-md mb-4">
-            {error}
+          <div className="bg-red-50 text-red-600 p-4 rounded-md mb-4 flex flex-col">
+            <div className="flex justify-between items-center mb-2">
+              <div className="font-medium">Error loading chats</div>
+              <button 
+                onClick={() => setError(null)} 
+                className="text-red-600 hover:text-red-800"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="mb-3">{error}</div>
+            <button
+              onClick={fetchChats}
+              className="self-end px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 text-sm"
+            >
+              Try Again
+            </button>
           </div>
         )}
         
@@ -241,7 +324,7 @@ export default function ChatsPage() {
         ) : (
           <div className="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
             {chats.map(chat => (
-              <div key={chat.id} className="bg-white rounded-lg shadow p-4 border border-gray-200">
+              <div key={chat.id} className="bg-white rounded-lg shadow p-4 border border-gray-200 hover:shadow-md transition-shadow">
                 <div className="flex justify-between items-start mb-2">
                   <h2 className="font-medium text-lg truncate">
                     {editChatId === chat.id ? (
@@ -352,6 +435,13 @@ export default function ChatsPage() {
                 placeholder="Title for your new chat"
                 className="w-full p-2 border border-gray-300 rounded-md"
                 autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    createNewChat();
+                  } else if (e.key === 'Escape') {
+                    setShowNewChatModal(false);
+                  }
+                }}
               />
             </div>
             <div className="flex justify-end space-x-2">

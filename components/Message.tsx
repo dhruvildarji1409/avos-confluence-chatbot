@@ -4,8 +4,9 @@ import React from 'react';
 import ReactMarkdown from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { atomDark } from 'react-syntax-highlighter/dist/cjs/styles/prism';
-import { FaUser, FaRobot, FaExclamationTriangle } from 'react-icons/fa';
+import { FaUser, FaRobot, FaExclamationTriangle, FaDatabase, FaBrain } from 'react-icons/fa';
 import rehypeRaw from 'rehype-raw';
+import CodeBlockSource from './CodeBlockSource';
 
 interface MessageProps {
   message: {
@@ -14,6 +15,8 @@ interface MessageProps {
     timestamp: Date | string;
     isDeepSearch?: boolean;
     isError?: boolean;
+    usedDatabase?: boolean;
+    databaseFallback?: boolean;
   };
   isDeepSearch?: boolean;
   isError?: boolean;
@@ -25,6 +28,10 @@ const Message: React.FC<MessageProps> = ({ message, isDeepSearch, isError }) => 
   const hasError = isError || message.isError;
   // Check if this is a deep search - either from props or message property
   const isDeep = isDeepSearch || message.isDeepSearch;
+  // Check if database was used for this response
+  const usedDatabase = message.usedDatabase;
+  // Check if this was a database fallback (tried db but failed)
+  const databaseFallback = message.databaseFallback;
   
   // Handle timestamp formatting if needed
   const formatTimestamp = () => {
@@ -63,7 +70,23 @@ const Message: React.FC<MessageProps> = ({ message, isDeepSearch, isError }) => 
           ) : hasError ? (
             <FaExclamationTriangle className="text-red-500 mt-1" />
           ) : (
-            <FaRobot className={`${isDeep ? 'text-blue-700' : 'text-blue-600'} mt-1`} />
+            <div className="flex flex-col items-center">
+              <FaRobot className={`${isDeep ? 'text-blue-700' : 'text-blue-600'} mt-1`} />
+              {!isUser && usedDatabase !== undefined && (
+                <div className="mt-1 text-xs flex items-center" title={usedDatabase ? "Used database knowledge" : "Used general knowledge only"}>
+                  {usedDatabase ? (
+                    <FaDatabase className="text-blue-600" title="Database knowledge used" />
+                  ) : (
+                    <FaBrain className="text-purple-600" title="LLM knowledge only" />
+                  )}
+                </div>
+              )}
+              {!isUser && databaseFallback && (
+                <div className="mt-1 text-xs flex items-center">
+                  <span className="text-yellow-600 text-[10px]" title="Database access failed, using general knowledge">DB ⚠️</span>
+                </div>
+              )}
+            </div>
           )}
         </div>
         
@@ -71,6 +94,26 @@ const Message: React.FC<MessageProps> = ({ message, isDeepSearch, isError }) => 
           {formatTimestamp() && (
             <div className="text-xs text-gray-500 mb-1">
               {formatTimestamp()}
+              {!isUser && usedDatabase !== undefined && (
+                <span className="ml-2 text-xs" title={usedDatabase ? "Used database knowledge" : "Used general knowledge only"}>
+                  {usedDatabase ? (
+                    <span className="text-blue-600">
+                      <FaDatabase className="inline mr-1" size={10} />
+                      DB
+                    </span>
+                  ) : (
+                    <span className="text-purple-600">
+                      <FaBrain className="inline mr-1" size={10} />
+                      LLM
+                    </span>
+                  )}
+                </span>
+              )}
+              {!isUser && databaseFallback && (
+                <span className="ml-2 text-xs text-yellow-600" title="Database access failed, using general knowledge">
+                  ⚠️ DB Fallback
+                </span>
+              )}
             </div>
           )}
           <ReactMarkdown
@@ -78,15 +121,37 @@ const Message: React.FC<MessageProps> = ({ message, isDeepSearch, isError }) => 
             components={{
               code({ node, inline, className, children, ...props }: any) {
                 const match = /language-(\w+)/.exec(className || '');
+                const language = match ? match[1] : '';
+                const codeContent = String(children).replace(/\n$/, '');
+                
+                // Check if this code block came from the database
+                // We specifically mark code from the database with the <EXACT_CODE_BLOCK> tag
+                const isFromDatabase = usedDatabase && (
+                  codeContent.includes('<EXACT_CODE_BLOCK>') || 
+                  message.content.includes('<EXACT_CODE_BLOCK>') ||
+                  message.content.includes('CODE_BLOCK_START')
+                );
+                
                 return !inline && match ? (
-                  <SyntaxHighlighter
-                    style={atomDark as any}
-                    language={match[1]}
-                    PreTag="div"
-                    {...props}
-                  >
-                    {String(children).replace(/\n$/, '')}
-                  </SyntaxHighlighter>
+                  <div className="relative mb-4">
+                    {language && (
+                      <div className="absolute top-0 right-0 bg-gray-700 text-gray-200 text-xs px-2 py-1 rounded-bl-md rounded-tr-md">
+                        {language}
+                      </div>
+                    )}
+                    <SyntaxHighlighter
+                      style={atomDark as any}
+                      language={language}
+                      PreTag="div"
+                      wrapLongLines={false}
+                      showLineNumbers={true}
+                      {...props}
+                    >
+                      {codeContent}
+                    </SyntaxHighlighter>
+                    {/* Show source indicator if from database */}
+                    <CodeBlockSource isFromDatabase={isFromDatabase} language={language} />
+                  </div>
                 ) : (
                   <code className={`${className} px-1 py-0.5 bg-gray-200 dark:bg-gray-800 rounded`} {...props}>
                     {children}

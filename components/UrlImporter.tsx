@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { FaLink, FaSpinner, FaExternalLinkAlt, FaInfoCircle, FaLock } from 'react-icons/fa';
+import { FaLink, FaSpinner, FaExternalLinkAlt } from 'react-icons/fa';
 
 interface ImportedPage {
   pageTitle: string;
@@ -61,7 +61,7 @@ const UrlImporter: React.FC = () => {
       
       // Update success message
       setStatus({
-        message: `Successfully indexed "${data.data.pageTitle}" (Note: Content may be limited based on authentication level)`,
+        message: `Successfully indexed "${data.data.pageTitle}"`,
         type: 'success',
       });
       
@@ -92,19 +92,6 @@ const UrlImporter: React.FC = () => {
   return (
     <div className="bg-white rounded-lg shadow-md p-4">
       <h2 className="text-lg font-semibold mb-4">Import Confluence Page</h2>
-      
-      <div className="bg-blue-50 p-3 rounded-md mb-4 flex items-start">
-        <FaLock className="text-blue-500 mt-1 mr-2 flex-shrink-0" />
-        <div className="text-sm text-blue-700">
-          <p className="font-medium mb-1">Authentication Update</p>
-          <p>Basic authentication has been disabled on the Confluence instance. To access full content, an API token is needed.</p>
-          <ul className="list-disc ml-5 mt-2">
-            <li>To generate a token, go to <a href="https://id.atlassian.com/manage-profile/security/api-tokens" target="_blank" rel="noopener noreferrer" className="underline">Atlassian API tokens</a></li>
-            <li>Add the token to the .env file as CONFLUENCE_API_TOKEN</li>
-          </ul>
-          <p className="mt-2">Until configured, only limited metadata will be stored for pages.</p>
-        </div>
-      </div>
       
       <form onSubmit={handleSubmit}>
         <div className="flex items-center mb-4">

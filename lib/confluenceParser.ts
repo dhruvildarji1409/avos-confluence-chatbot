@@ -2,6 +2,7 @@ import axios from 'axios';
 import * as cheerio from 'cheerio';
 import ConfluenceContent from '../models/ConfluenceContent';
 import connectToDatabase from './mongodb';
+import { prepareForDatabaseInsertion, sanitizeForDatabase, extractCodeBlocks } from './dbContentProcessor';
 
 interface ExtractedElement {
   type: string;
@@ -18,6 +19,9 @@ export interface ParsedConfluenceData {
   content: string;
   fullHtmlContent: string;
   extractedElements: ExtractedElement[];
+  extractedCodeBlocks?: Array<{language: string, code: string}>;
+  isSanitized?: boolean;
+  contentType?: string;
   nestedLinks?: string[];
 }
 
@@ -130,6 +134,12 @@ export async function parseConfluencePage(
       pageId = Buffer.from(pageUrl).toString('base64');
     }
     
+    // Log the credentials being used (without revealing sensitive values)
+    console.log('Using authentication:');
+    console.log(`- Username present: ${Boolean(process.env.CONFLUENCE_USERNAME)}`);
+    console.log(`- Password present: ${Boolean(process.env.CONFLUENCE_PASSWORD)}`);
+    console.log(`- API token present: ${Boolean(process.env.CONFLUENCE_API_TOKEN)}`);
+    
     // Try to fetch using API token
     let detailedContent = '';
     let pageContent = ''; // Single variable for page content
@@ -160,11 +170,22 @@ export async function parseConfluencePage(
             headers: {
               'Authorization': `Bearer ${token}`,
               'Accept': 'application/json'
-            }
+            },
+            validateStatus: (status) => status < 400, // Only treat HTTP errors as errors
+            maxRedirects: 0, // Prevent redirects to login pages
+            timeout: 10000 // 10 second timeout
           });
           
           console.log(`API token authentication successful`);
           console.log(`API response status: ${response.status}`);
+          
+          // Check if the response is JSON (prevent HTML parsing errors)
+          const contentType = response.headers['content-type'];
+          if (!contentType || !contentType.includes('application/json')) {
+            console.error(`Expected JSON response but got ${contentType}`);
+            console.error(`Response data preview: ${typeof response.data === 'string' ? response.data.substring(0, 100) : 'Not a string'}`);
+            throw new Error(`Expected JSON response but received ${contentType || 'unknown content type'}`);
+          }
           
           if (response.data && response.data.results && response.data.results.length > 0) {
             const page = response.data.results[0];
@@ -193,6 +214,12 @@ export async function parseConfluencePage(
           }
         } catch (tokenError: any) {
           console.warn(`API token authentication failed: ${tokenError.message}`);
+          console.warn('Response details:', tokenError.response ? {
+            status: tokenError.response.status,
+            statusText: tokenError.response.statusText,
+            headers: tokenError.response.headers,
+            contentType: tokenError.response.headers['content-type']
+          } : 'No response details available');
           
           // Fall back to basic auth
           try {
@@ -201,11 +228,20 @@ export async function parseConfluencePage(
               headers: {
                 'Authorization': `Basic ${basicAuth}`,
                 'Accept': 'application/json'
-              }
+              },
+              validateStatus: (status) => status < 400,
+              maxRedirects: 0,
+              timeout: 10000 // 10 second timeout
             });
             
             console.log(`Basic auth authentication successful`);
             console.log(`API response status: ${response.status}`);
+            
+            // Check if the response is JSON
+            const contentType = response.headers['content-type'];
+            if (!contentType || !contentType.includes('application/json')) {
+              throw new Error(`Expected JSON response but received ${contentType || 'unknown content type'}`);
+            }
             
             if (response.data && response.data.results && response.data.results.length > 0) {
               const page = response.data.results[0];
@@ -234,7 +270,58 @@ export async function parseConfluencePage(
             }
           } catch (basicAuthError: any) {
             console.warn(`Basic auth authentication failed: ${basicAuthError.message}`);
-            // Continue with fallback approach
+            console.warn('Response details:', basicAuthError.response ? {
+              status: basicAuthError.response.status,
+              statusText: basicAuthError.response.statusText,
+              headers: basicAuthError.response.headers,
+              contentType: basicAuthError.response.headers['content-type']
+            } : 'No response details available');
+            
+            // Third fallback - try direct page fetch with axios (useful when API has issues but direct access works)
+            try {
+              console.log(`Attempting direct page access to ${pageUrl}...`);
+              
+              const directResponse = await axios.get(pageUrl, {
+                headers: {
+                  // Try with cookie auth if available 
+                  'Cookie': process.env.CONFLUENCE_COOKIES || '',
+                  'Accept': 'text/html,application/xhtml+xml'
+                },
+                maxRedirects: 5, // Allow some redirects for cookie-based auth
+                timeout: 15000,
+                validateStatus: (status) => status < 400
+              });
+              
+              console.log(`Direct page access successful, status: ${directResponse.status}`);
+              
+              if (directResponse.data && typeof directResponse.data === 'string') {
+                // Use cheerio to parse the HTML content
+                const $ = cheerio.load(directResponse.data);
+                
+                // Extract the page title
+                pageTitle = $('#title-text').text().trim() || pageTitle;
+                
+                // Get the main content
+                const mainContent = $('#main-content').html() || '';
+                
+                // Set content variables
+                detailedContent = mainContent;
+                pageContent = mainContent;
+                
+                // Extract elements from the HTML
+                extractElementsFromHtml(mainContent, extractedElements);
+                
+                // Extract links
+                nestedLinks = extractConfluenceLinks($, process.env.CONFLUENCE_BASE_URL as string);
+                
+                console.log(`Extracted page content directly: ${pageTitle} with ${extractedElements.length} elements`);
+              } else {
+                throw new Error('Direct page access returned invalid data format');
+              }
+            } catch (directAccessError: any) {
+              console.error('All authentication methods failed, including direct access:', directAccessError.message);
+              // Continue with placeholder approach below
+            }
           }
         }
       }
@@ -269,10 +356,16 @@ export async function parseConfluencePage(
       content: pageContent,
       fullHtmlContent: detailedContent || '',
       extractedElements: extractedElements.length > 0 ? extractedElements : [],
+      extractedCodeBlocks: extractCodeBlocks(pageContent),
+      isSanitized: true,
+      contentType: 'markdown',
       nestedLinks
     };
     
-    console.log(`Saving to database: pageId=${pageId}, title=${pageTitle}`);
+    console.log(`Sanitizing and saving to database: pageId=${pageId}, title=${pageTitle}`);
+    
+    // Sanitize content before storage
+    parsedData.content = sanitizeForDatabase(pageContent);
     
     // Store the data in MongoDB
     try {
@@ -283,7 +376,7 @@ export async function parseConfluencePage(
       // If there's a validation error about empty content, set a placeholder
       if (error.message && error.message.includes('content')) {
         console.log('Content validation error, using placeholder');
-        parsedData.content = `Placeholder content for ${pageTitle} - ${new Date().toISOString()}`;
+        parsedData.content = sanitizeForDatabase(`Placeholder content for ${pageTitle} - ${new Date().toISOString()}`);
         await ConfluenceContent.create(parsedData);
       } else {
         throw error; // Re-throw if it's not a content validation error
@@ -536,6 +629,9 @@ function extractElementsFromHtml(html: string, extractedElements: ExtractedEleme
 export async function searchConfluenceContent(query: string, limit: number = 5): Promise<any[]> {
   await connectToDatabase();
   
+  // Check if this is a code-specific search
+  const isCodeSearch = /code|example|sample|implementation|snippet|syntax|function|class|method/i.test(query);
+  
   // Split query into keywords for better search results
   const queryKeywords = query.split(/\s+/)
     .filter(word => word.length > 2)  // Filter out short words
@@ -555,6 +651,27 @@ export async function searchConfluenceContent(query: string, limit: number = 5):
     
     if (textSearchResults.length > 0) {
       return textSearchResults;
+    }
+    
+    // For code-specific searches, try a specialized search in code blocks
+    if (isCodeSearch) {
+      console.log("Attempting specialized code block search");
+      
+      // Search in extracted code blocks
+      const codeBlockResults = await ConfluenceContent.find({
+        $or: [
+          { 'extractedCodeBlocks.code': { $regex: queryKeywords.join('|'), $options: 'i' } },
+          { 'extractedCodeBlocks.language': { $regex: queryKeywords.join('|'), $options: 'i' } }
+        ]
+      })
+        .limit(limit)
+        .lean()
+        .exec();
+        
+      if (codeBlockResults.length > 0) {
+        console.log(`Found ${codeBlockResults.length} results in code blocks`);
+        return codeBlockResults;
+      }
     }
     
     // Second attempt: If text search finds nothing, try regex search on content
@@ -590,20 +707,6 @@ export async function searchConfluenceContent(query: string, limit: number = 5):
     return titleResults;
   } catch (error) {
     console.error('Error searching Confluence content:', error);
-    
-    // Fallback to a simpler regex search on just content if all else fails
-    try {
-      const fallbackResults = await ConfluenceContent.find({
-        content: { $regex: query.split(' ')[0], $options: 'i' }
-      })
-        .limit(limit)
-        .lean()
-        .exec();
-      
-      return fallbackResults;
-    } catch (fallbackError) {
-      console.error('Fallback search also failed:', fallbackError);
-      return [];
-    }
+    return [];
   }
 } 

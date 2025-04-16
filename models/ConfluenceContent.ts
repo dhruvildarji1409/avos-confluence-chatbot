@@ -13,6 +13,12 @@ export interface IConfluenceContent extends Document {
     src?: string;
     alt?: string;
   }>;
+  extractedCodeBlocks?: Array<{
+    language: string;
+    code: string;
+  }>;
+  isSanitized?: boolean;
+  contentType?: string;
   nestedLinks?: string[];
   createdAt: Date;
   updatedAt: Date;
@@ -34,6 +40,14 @@ const ConfluenceContentSchema: Schema = new Schema(
         alt: { type: String },
       },
     ],
+    extractedCodeBlocks: [
+      {
+        language: { type: String, default: '' },
+        code: { type: String, required: true },
+      },
+    ],
+    isSanitized: { type: Boolean, default: false },
+    contentType: { type: String, default: 'markdown' },
     nestedLinks: [{ type: String }],
   },
   { timestamps: true }
@@ -44,12 +58,14 @@ const ConfluenceContentSchema: Schema = new Schema(
 ConfluenceContentSchema.index(
   { 
     pageTitle: 'text', 
-    content: 'text'
+    content: 'text',
+    'extractedCodeBlocks.code': 'text' // Add code blocks to the text index
   }, 
   {
     weights: {
-      pageTitle: 10,  // Title is most important
-      content: 5      // Content is less important
+      pageTitle: 10,       // Title is most important
+      content: 5,          // Content is next most important
+      'extractedCodeBlocks.code': 8  // Code blocks are very important
     },
     name: 'text_index'  // Important: Use the existing index name
   }
@@ -58,6 +74,7 @@ ConfluenceContentSchema.index(
 // Regular indexes for better performance on regex queries
 ConfluenceContentSchema.index({ pageTitle: 1 });
 ConfluenceContentSchema.index({ content: 1 });
+ConfluenceContentSchema.index({ 'extractedCodeBlocks.language': 1 }); // Index for code language search
 
 // Create model if it doesn't exist already
 const ConfluenceContent = mongoose.models.ConfluenceContent as Model<IConfluenceContent> || 

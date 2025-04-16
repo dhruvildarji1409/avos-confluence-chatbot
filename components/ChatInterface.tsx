@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
-import { FaPaperPlane, FaSpinner } from 'react-icons/fa';
+import { FaPaperPlane, FaSpinner, FaDatabase, FaBrain } from 'react-icons/fa';
 import Message from './Message';
 
 interface MessageType {
@@ -10,6 +10,8 @@ interface MessageType {
   timestamp: Date;
   isDeepSearch?: boolean;
   isError?: boolean;
+  usedDatabase?: boolean;
+  databaseFallback?: boolean;
 }
 
 interface Source {
@@ -188,6 +190,13 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
     try {
       console.log(`Sending chat request for: "${input.substring(0, 50)}${input.length > 50 ? '...' : ''}"`);
       
+      // Get previous conversation history to send to the API
+      const previousMessages = messages.slice(-6); // Get last 6 messages for context
+      const conversationHistory = previousMessages.map(msg => ({
+        role: msg.role,
+        content: msg.content
+      }));
+      
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: {
@@ -195,7 +204,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
         },
         body: JSON.stringify({
           query: input,
-          sessionId
+          sessionId,
+          conversationHistory
         }),
       });
       
@@ -255,12 +265,23 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
         localStorage.setItem('chatSessionId', data.sessionId);
       }
       
+      // Log if database was used for transparency
+      if (data.usedDatabase !== undefined) {
+        console.log(`Response used database: ${data.usedDatabase}`);
+      }
+      
+      if (data.databaseFallback) {
+        console.log(`Database access failed, fell back to LLM-only`);
+      }
+      
       const botMessage: MessageType = {
         role: 'assistant',
         content: data.answer,
         timestamp: new Date(),
         isDeepSearch: data.isDeepSearch || false,
-        isError: data.isError || false
+        isError: data.isError || false,
+        usedDatabase: data.usedDatabase,
+        databaseFallback: data.databaseFallback
       };
       
       setMessages(prev => [...prev, botMessage]);
@@ -289,9 +310,9 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   };
 
   return (
-    <div className="chat-interface">
+    <div className="chat-interface flex flex-col h-[calc(100vh-6rem)] bg-white rounded-lg shadow-md border border-gray-200 overflow-hidden">
       {/* Chat messages */}
-      <div className="messages">
+      <div className="messages flex-1 overflow-y-auto p-4 space-y-4">
         {messages.map((message, index) => (
           <Message key={index} message={message} />
         ))}
@@ -299,16 +320,21 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
       </div>
 
       {/* Input form */}
-      <form onSubmit={handleSubmit} className="input-form">
+      <form onSubmit={handleSubmit} className="input-form flex border-t border-gray-200 p-4 bg-gray-50">
         <input
           type="text"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder="Type your message..."
           disabled={isLoading}
+          className="flex-1 border border-gray-300 rounded-l-md px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
-        <button type="submit" disabled={isLoading || !input.trim()}>
-          {isLoading ? <FaSpinner className="spinner" /> : <FaPaperPlane />}
+        <button 
+          type="submit" 
+          disabled={isLoading || !input.trim()}
+          className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-r-md disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {isLoading ? <FaSpinner className="spinner animate-spin" /> : <FaPaperPlane />}
         </button>
       </form>
     </div>

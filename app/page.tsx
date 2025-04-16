@@ -10,10 +10,8 @@ export default function Home() {
       <Header />
       <div className="flex flex-col md:flex-row flex-1">
         <div className="w-full md:w-1/3 p-4 bg-gray-50">
-          <UrlImporter />
-          
-          {/* Database Tools Section */}
-          <div className="mt-6 p-4 bg-white rounded-lg shadow border border-gray-200">
+          {/* Database Tools Section - Moved to top */}
+          <div className="p-4 bg-white rounded-lg shadow border border-gray-200">
             <h2 className="text-lg font-bold mb-4">Database Tools</h2>
             
             <div className="space-y-3">
@@ -33,6 +31,10 @@ export default function Home() {
                 <div className="text-sm text-gray-600">Search through indexed content</div>
               </Link>
             </div>
+          </div>
+          
+          <div className="mt-6">
+            <UrlImporter />
           </div>
           
           {/* Chats Section */}

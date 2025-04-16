@@ -7,6 +7,7 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const query = url.searchParams.get('q') || '';
     
+    console.log(`API: Search query received: "${query}"`);
     // Connect to the database
     await connectToDatabase();
     
@@ -14,6 +15,7 @@ export async function GET(request: Request) {
     let content;
     
     if (query) {
+      console.log('API: Performing text search...');
       content = await ConfluenceContent.find(
         { $text: { $search: query } },
         { score: { $meta: 'textScore' } }
@@ -21,11 +23,13 @@ export async function GET(request: Request) {
       .sort({ score: { $meta: 'textScore' } })
       .limit(20);
     } else {
+      console.log('API: Fetching recent content...');
       content = await ConfluenceContent.find({})
         .sort({ updatedAt: -1 })
         .limit(10);
     }
     
+    console.log(`API: Found ${content.length} results`);
     // Return the data
     return NextResponse.json({
       success: true,
@@ -36,7 +40,7 @@ export async function GET(request: Request) {
   } catch (error) {
     console.error('Error searching Confluence content:', error);
     return NextResponse.json(
-      { error: (error as Error).message || 'Failed to search Confluence content' },
+      { success: false, error: (error as Error).message || 'Failed to search Confluence content' },
       { status: 500 }
     );
   }
