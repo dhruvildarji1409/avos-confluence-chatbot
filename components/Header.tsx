@@ -2,7 +2,7 @@
 
 import React from 'react';
 import Link from 'next/link';
-import { FaRobot, FaComments, FaUser, FaSignOutAlt } from 'react-icons/fa';
+import { FaRobot, FaComments, FaUser, FaSignOutAlt, FaProjectDiagram, FaNetworkWired } from 'react-icons/fa';
 import { useAuth } from './AuthCheck';
 
 const Header: React.FC = () => {
@@ -23,6 +23,16 @@ const Header: React.FC = () => {
               <Link href="/chats" className="flex items-center space-x-2 text-blue-300 hover:text-blue-200">
                 <FaComments />
                 <span>My Chats</span>
+              </Link>
+              
+              <Link href="/knowledge-graph" className="flex items-center space-x-2 text-purple-300 hover:text-purple-200">
+                <FaProjectDiagram />
+                <span>Knowledge Graph</span>
+              </Link>
+              
+              <Link href="/graphical-rag" className="flex items-center space-x-2 text-yellow-300 hover:text-yellow-200">
+                <FaNetworkWired />
+                <span>Graphical RAG</span>
               </Link>
               
               <div className="flex items-center space-x-3 ml-6">

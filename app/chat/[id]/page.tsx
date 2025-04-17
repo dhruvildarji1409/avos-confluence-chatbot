@@ -5,7 +5,9 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Header from '@/components/Header';
 import ChatInterface from '@/components/ChatInterface';
-import { FaArrowLeft, FaShare, FaEdit, FaTrash } from 'react-icons/fa';
+import ShareButton from '@/components/ShareButton';
+import ShareModal from '@/components/ShareModal';
+import { FaArrowLeft, FaEdit, FaTrash } from 'react-icons/fa';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -20,6 +22,7 @@ interface ChatData {
   title: string;
   messages: Message[];
   isShared: boolean;
+  sharedWith?: string[];
 }
 
 export default function ChatPage() {
@@ -34,7 +37,9 @@ export default function ChatPage() {
   const [editTitle, setEditTitle] = useState('');
   const [shareCode, setShareCode] = useState<string | null>(null);
   const [shareUrl, setShareUrl] = useState<string | null>(null);
-
+  const [sharedWith, setSharedWith] = useState<string[]>([]);
+  const [isShareModalOpen, setIsShareModalOpen] = useState(false);
+  
   // Fetch chat data
   useEffect(() => {
     const fetchChat = async () => {
@@ -52,6 +57,9 @@ export default function ChatPage() {
         const data = await response.json();
         setChat(data);
         setEditTitle(data.title);
+        if (data.sharedWith) {
+          setSharedWith(data.sharedWith);
+        }
       } catch (err: any) {
         setError(err.message || 'An error occurred');
       } finally {
@@ -115,8 +123,21 @@ export default function ChatPage() {
     }
   };
 
-  // Share chat
-  const shareChat = async () => {
+  // Handle shared chat URL and code
+  const handleShared = (code: string, url: string, emails: string[]) => {
+    setShareCode(code);
+    setShareUrl(url);
+    setSharedWith(emails);
+    setChat(chat => chat ? { ...chat, isShared: true, sharedWith: emails } : null);
+    setIsShareModalOpen(true);
+  };
+
+  // Unshare chat
+  const unshareChat = async () => {
+    if (!confirm('Are you sure you want to stop sharing this chat?')) {
+      return;
+    }
+
     try {
       const response = await fetch(`/api/chats/${chatId}/share`, {
         method: 'POST',
@@ -124,50 +145,50 @@ export default function ChatPage() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          action: 'share',
+          action: 'unshare'
         }),
       });
       
       if (!response.ok) {
-        throw new Error('Failed to share chat');
+        throw new Error('Failed to stop sharing chat');
+      }
+      
+      // Update the chat
+      setChat(chat => chat ? { ...chat, isShared: false, sharedWith: [] } : null);
+      setSharedWith([]);
+      setShareCode(null);
+      setShareUrl(null);
+      setIsShareModalOpen(false);
+    } catch (err: any) {
+      setError(err.message || 'Failed to stop sharing chat');
+    }
+  };
+
+  // Update shared users
+  const updateSharedUsers = async (updatedEmails: string[]) => {
+    try {
+      const response = await fetch(`/api/chats/${chatId}/share`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'update-sharing',
+          sharedWithEmails: updatedEmails
+        }),
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to update sharing settings');
       }
       
       const data = await response.json();
       
       // Update the chat
-      setChat(chat => chat ? { ...chat, isShared: true } : null);
-      
-      // Display the share code and URL
-      setShareCode(data.shareCode);
-      setShareUrl(data.shareUrl);
+      setChat(chat => chat ? { ...chat, sharedWith: data.sharedWith } : null);
+      setSharedWith(data.sharedWith);
     } catch (err: any) {
-      setError(err.message || 'Failed to share chat');
-    }
-  };
-
-  // Copy share URL to clipboard
-  const copyShareUrl = () => {
-    if (shareUrl) {
-      navigator.clipboard.writeText(shareUrl)
-        .then(() => {
-          // Show temporary notification
-          const notification = document.createElement('div');
-          notification.className = 'fixed bottom-4 right-4 bg-green-600 text-white py-2 px-4 rounded-md shadow-lg';
-          notification.textContent = 'Share URL copied to clipboard!';
-          document.body.appendChild(notification);
-          
-          // Remove notification after 3 seconds
-          setTimeout(() => {
-            notification.classList.add('opacity-0', 'transition-opacity', 'duration-500');
-            setTimeout(() => {
-              document.body.removeChild(notification);
-            }, 500);
-          }, 2500);
-        })
-        .catch(err => {
-          console.error('Failed to copy URL:', err);
-          alert('Failed to copy URL to clipboard');
-        });
+      setError(err.message || 'Failed to update sharing settings');
     }
   };
 
@@ -242,13 +263,12 @@ export default function ChatPage() {
                     >
                       <FaEdit />
                     </button>
-                    <button
-                      onClick={shareChat}
-                      className="text-green-600 hover:text-green-800 p-2"
-                      title={chat.isShared ? 'Update Share Link' : 'Share Chat'}
-                    >
-                      <FaShare />
-                    </button>
+                    <ShareButton 
+                      chatId={chatId}
+                      isShared={chat.isShared}
+                      sharedWith={chat.sharedWith}
+                      onShared={handleShared}
+                    />
                     <button
                       onClick={deleteChat}
                       className="text-red-600 hover:text-red-800 p-2"
@@ -264,6 +284,9 @@ export default function ChatPage() {
             {chat.isShared && (
               <div className="bg-green-50 text-green-700 p-2 rounded-md mb-4 inline-block text-sm">
                 This chat is shared
+                {chat.sharedWith && chat.sharedWith.length > 0 && (
+                  <span> with {chat.sharedWith.length} {chat.sharedWith.length === 1 ? 'user' : 'users'}</span>
+                )}
               </div>
             )}
             
@@ -272,59 +295,17 @@ export default function ChatPage() {
         )}
       </div>
       
-      {/* Share URL Modal */}
-      {shareCode && shareUrl && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full">
-            <h2 className="text-xl font-bold mb-4">Share Your Chat</h2>
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Share Code
-              </label>
-              <div className="flex items-center">
-                <input
-                  type="text"
-                  value={shareCode}
-                  readOnly
-                  className="w-full p-2 border border-gray-300 rounded-md bg-gray-50"
-                />
-              </div>
-            </div>
-            <div className="mb-6">
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Share URL
-              </label>
-              <div className="flex items-center">
-                <input
-                  type="text"
-                  value={shareUrl}
-                  readOnly
-                  className="w-full p-2 border border-gray-300 rounded-md bg-gray-50"
-                />
-                <button
-                  onClick={copyShareUrl}
-                  className="ml-2 p-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
-                >
-                  Copy
-                </button>
-              </div>
-            </div>
-            <div className="text-sm text-gray-600 mb-4">
-              Anyone with this link can view this chat's conversation history.
-            </div>
-            <div className="flex justify-end">
-              <button
-                onClick={() => {
-                  setShareCode(null);
-                  setShareUrl(null);
-                }}
-                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
+      {/* Share Modal */}
+      {isShareModalOpen && shareCode && shareUrl && (
+        <ShareModal
+          isOpen={isShareModalOpen}
+          onClose={() => setIsShareModalOpen(false)}
+          shareCode={shareCode}
+          shareUrl={shareUrl}
+          sharedWith={sharedWith}
+          onUpdateShare={updateSharedUsers}
+          onUnshare={unshareChat}
+        />
       )}
     </div>
   );

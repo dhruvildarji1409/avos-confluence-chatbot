@@ -54,18 +54,18 @@ const ConfluenceContentSchema: Schema = new Schema(
 );
 
 // Add text indexes for search with weights to prioritize results
-// Use the same index name that's already in the database
+// Match the existing index structure from the database
 ConfluenceContentSchema.index(
   { 
     pageTitle: 'text', 
-    content: 'text',
-    'extractedCodeBlocks.code': 'text' // Add code blocks to the text index
+    content: 'text'
+    // Remove extractedCodeBlocks.code as it's not in the existing index
   }, 
   {
     weights: {
       pageTitle: 10,       // Title is most important
-      content: 5,          // Content is next most important
-      'extractedCodeBlocks.code': 8  // Code blocks are very important
+      content: 5           // Content is next most important
+      // Remove extractedCodeBlocks.code weight to match existing index
     },
     name: 'text_index'  // Important: Use the existing index name
   }
